@@ -1,0 +1,126 @@
+---
+title: "Site 2 Classifier Comparison"
+author: "Natalie"
+date: "2024-08-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages}
+library(mlr3)
+library(mlr3learners)
+library(mlr3spatial)
+library(terra)
+library(sf)
+library(ggplot2)
+library(tidyterra)
+library(here)
+```
+
+```{r}
+site2 <- rast(here("Data", "sites_1.3cm_cropped", "site2_cropped", "site2_cropped.tif"))
+names(site2) <- c("Band_1", "Band_2", "Band_3")
+plotRGB(site2)
+site2_pts <- read_sf(here("Data", "sites_1.3cm_cropped", "site2_cropped", "site2_cropped_pts_rgb.gpkg"), stringsAsFactors = T)
+site2_pts <- select(site2_pts, -rand_point)
+site2_pts
+```
+Create spatial task
+```{r}
+site2_tsk <- as_task_classif_st(site2_pts, target = "className")
+```
+
+Partition data
+```{r}
+set.seed(102)
+site2_split <- partition(site2_tsk, ratio = 0.7)
+```
+
+Create learner
+```{r}
+site2_lrn <- lrn("classif.ranger")
+```
+
+Train learner
+```{r}
+site2_train <- site2_lrn$train(site2_tsk, site2_split$train)
+```
+
+Test learner and obtain classification accuracy
+```{r}
+#use learner to predict on the test partition of the task
+site2_test <- site2_lrn$predict(site2_tsk, site2_split$test)
+
+#obtain classification accuracy
+site2_test$score(msr("classif.acc"))
+```
+
+# Apply the site2 model on other sites and obtain its classification accuracy
+
+Import the point data from all sites, each containing an associated class. We will use this to obtain classification accuracy but comparing the class the model has classifed the point has, versus what class the point actually is. 
+```{r}
+site1_pts <- read_sf(here("Data", "sites_1.3cm_cropped", "site1_cropped", "site1_cropped_pts.shp"))
+site3_pts <- read_sf(here("Data", "sites_1.3cm_cropped", "site3_cropped", "site3_cropped_pts.shp"))
+site4_pts <- read_sf(here("Data", "sites_1.3cm_cropped", "site4_cropped", "site4_cropped_pts.shp"))
+site5_pts <- read_sf(here("Data", "sites_1.3cm_cropped", "site5_cropped", "site5_cropped_pts.shp"))
+site6_pts <- read_sf(here("Data", "sites_1.3cm_cropped", "site6_cropped", "site6_cropped_pts.shp"))
+site7_pts <- read_sf(here("Data", "sites_1.3cm_cropped", "site7_cropped", "site7_cropped_pts.shp"))
+```
+
+Import the rasters of all sites
+```{r}
+site1_rast <- rast(here("Data", "sites_1.3cm_cropped", "site1_cropped", "site1_cropped.tif"))
+site3_rast <- rast(here("Data", "sites_1.3cm_cropped", "site3_cropped", "site3_cropped.tif"))
+site4_rast <- rast(here("Data", "sites_1.3cm_cropped", "site4_cropped", "site4_cropped.tif"))
+site5_rast <- rast(here("Data", "sites_1.3cm_cropped", "site5_cropped", "site5_cropped.tif"))
+site6_rast <- rast(here("Data", "sites_1.3cm_cropped", "site6_cropped", "site6_cropped.tif"))
+site7_rast <- rast(here("Data", "sites_1.3cm_cropped", "site7_cropped", "site7_cropped.tif"))
+
+#rename layers to Band_1, Band_2 and Band_3
+site_ids <- setdiff(1:7, 2)
+for (site_id in site_ids) {
+  raster <- get(paste0("site", site_id, "_rast"))
+  names(raster) <- c("Band_1", "Band_2", "Band_3")
+  assign(paste0("site", site_id, "_rast"), raster)
+  print(paste("Renamed layers for site", site_id))
+}
+```
+
+
+Create list of site ids
+```{r}
+site_ids <- setdiff(1:7, 2) 
+```
+
+Create vector to store accuracy results
+```{r}
+accuracy_results <- numeric(length(site_ids))
+names(accuracy_results) <- paste0("site_", site_ids)
+```
+
+Create loop over each site excluding site 2
+```{r}
+for (i in seq_along(site_ids)) {
+  site_id <- site_ids[i]
+  raster_to_classify <- get(paste0("site", site_id, "_rast"))
+  points_shapefile <- get(paste0("site", site_id, "_pts"))
+  classified_raster <- predict_spatial(raster_to_classify, site2_lrn)
+  extracted_values <- extract(classified_raster, points_shapefile)
+  raster_className <- extracted_values[,2]
+  shapefile_className <- points_shapefile$className
+  accuracy_vector <- raster_className == shapefile_className
+  classification_accuracy <- sum(accuracy_vector) / length(accuracy_vector)
+  accuracy_results[i] <- classification_accuracy
+  print(paste("Classification Accuracy for Site", site_id, ":", classification_accuracy))
+}
+```
+
+Print final classification accuracy output
+```{r}
+print(accuracy_results)
+```
+
+
